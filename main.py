@@ -1,6 +1,14 @@
 import json
+import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, constants
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from postcard_creator.postcard_creator import PostcardCreator, Postcard, Token, Recipient, Sender
+import logging
+import schedule
+
+logging.basicConfig(level=10, filename="log.log", filemode="w")
+
+logger = logging.getLogger('postcard_creator')
 
 # database
 
@@ -24,13 +32,21 @@ default_user = {
     "answer": "",
     "state": "default",
     "next_photo_id" : 0,
+    "photos_cache": [],
+    "photos_to_send": []
+
 }
 
-
-def get_user(id):
+def get_all_user_ids():
     with open("users.json", "r") as f:
         users = json.load(f)
-    if id in users.keys():
+    return list(users.keys())
+
+def get_user(id):
+    id = str(id)
+    with open("users.json", "r") as f:
+        users = json.load(f)
+    if str(id) in users:
         return users[id]
     else:
         set_user(id, default_user)
@@ -38,7 +54,7 @@ def get_user(id):
 
 
 def set_user(id, user):
-    users = {}
+    id = str(id)
 
     with open("users.json", "r") as f:
         users = json.load(f)
@@ -47,7 +63,6 @@ def set_user(id, user):
 
     with open("users.json", "w") as f:
         json.dump(users, f)
-
 
 def get_state(id):
     return get_user(id)["state"]
@@ -68,7 +83,8 @@ def get_formatted_status(id):
             prename=user["sender"]["prename"], lastname=user["sender"]["lastname"], street=user["sender"]["street"], place=user["sender"]["place"], zip=user["sender"]["zip"])
         recipient = "Prename: {prename}\nLastname: {lastname}\nStreet: {street}\nPlace: {place} {zip}".format(
             prename=user["recipient"]["prename"], lastname=user["recipient"]["lastname"], street=user["recipient"]["street"], place=user["recipient"]["place"], zip=user["recipient"]["zip"])
-        return "**Sender:**\n{sender}\n\n**Recipient:**\n{recipient}".format(sender=sender, recipient=recipient)
+        nr_of_cards = len(user["photos_cache"])
+        return "**Sender:**\n{sender}\n\n**Recipient:**\n{recipient}\n\nNumber of queued postcards: {nr_of_cards}".format(sender=sender, recipient=recipient, nr_of_cards=nr_of_cards)
 
 
 # create Bot
@@ -80,7 +96,7 @@ app = ApplicationBuilder().token(TOKEN).build()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="First send /new, then your photos and finally /send to send. Use /config to enter swiss post username and password, and /sender, /recipient to set each name and address, use /status to see your current sender and recipient"
+        text="Send me your photos and then /send to send them as postcards. Use /config to enter swiss post username and password, and /sender, /recipient to set each name and address, use /status to see your current sender and recipient"
     )
 
 
@@ -200,10 +216,14 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user["next_photo_id"] = user["next_photo_id"] + 1
     set_user(user_id, user)
 
+    new_file = await update.message.effective_attachment[-1].get_file()
 
+    user = get_user(user_id)
+    user["photos_cache"].append(str(photo_id)+"."+new_file.file_path.split(".")[-1])
+    set_user(user_id, user)
 
-    new_file = await update.message.effective_attachment.get_file()
-    await new_file.download_to_drive("photos/"+user_id+"/"+photo_id)
+    os.makedirs("photos/"+str(user_id), exist_ok=True)
+    await new_file.download_to_drive("photos/"+str(user_id)+"/"+str(photo_id)+"."+new_file.file_path.split(".")[-1])
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -221,6 +241,16 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    user = get_user(user_id)
+
+    photos = user["photos_cache"]
+    user["photos_cache"] = []
+
+    for photo in photos:
+        to_send = {"sender": user["sender"], "recipient": user["recipient"], "photo": photo}
+        user["photos_to_send"].append(to_send)
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Sending postcards"
@@ -293,6 +323,18 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def send_cards():
+    user_ids = get_all_user_ids()
+    for user_id in user_ids:
+        user = get_user(user_id)
+        print(user_id)
+        token = Token()
+        token.fetch_token(user["username"], user["password"])
+        w = PostcardCreator(token)
+        has_free_postcard = w.impl.has_free_postcard()
+        print(has_free_postcard)
+
+
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("new", new))
@@ -305,6 +347,9 @@ app.add_handler(CallbackQueryHandler(button))
 app.add_handler(MessageHandler(filters.PHOTO, photo))
 app.add_handler(MessageHandler(filters.ALL, answer))
 
-
+#token = Token()
+#token.fetch_token(username='calmo.pfadiattila@gmail.com', password='Z_$Amw_i6QFv?VJ', method="swissid")
+#print(token.to_json())
+send_cards()
 
 app.run_polling()
