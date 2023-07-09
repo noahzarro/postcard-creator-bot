@@ -29,8 +29,7 @@ default_user = {
         "place": "",
         "zip": 0000,
     },
-    "answer": "",
-    "state": "default",
+    "answer": "", # which answer the user will give after a button prompt
     "next_photo_id" : 0,
     "photos_cache": [],
     "photos_to_send": []
@@ -63,15 +62,6 @@ def set_user(id, user):
 
     with open("users.json", "w") as f:
         json.dump(users, f)
-
-def get_state(id):
-    return get_user(id)["state"]
-
-
-def set_state(id, state):
-    user = get_user(id)
-    user["state"] = state
-    set_user(id, user)
 
 
 def get_formatted_status(id):
@@ -127,7 +117,8 @@ async def sender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          InlineKeyboardButton("Lastname", callback_data="await_sender_lastname")],
         [InlineKeyboardButton("Street", callback_data="await_sender_street"),
          InlineKeyboardButton("Place", callback_data="await_sender_place")],
-        [InlineKeyboardButton("Zip", callback_data="await_sender_zip")]
+        [InlineKeyboardButton("Zip", callback_data="await_sender_zip"),
+         InlineKeyboardButton("All", callback_data="await_sender_all")]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -147,14 +138,12 @@ async def recipient(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text("What do you want to edit?", reply_markup=reply_markup)
 
-
+# gets called after a user pressed a button prompt
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
     user_id = update.callback_query.from_user.id
-
-    set_state(user_id, query.data)
 
     user = get_user(user_id)
 
@@ -256,6 +245,7 @@ async def send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text="Sending postcards"
     )
 
+# gets called after an user sent a text answer after a button prompt
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
 
